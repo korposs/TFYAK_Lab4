@@ -3,11 +3,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QIcon, QKeySequence, QPalette, QColor, QBrush
-from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QPlainTextEdit, QSplitter, QStyleFactory, QToolBar, QTableWidget, QTableWidgetItem
+from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QPlainTextEdit, QSplitter, QStyleFactory, QToolBar, QTableWidget, QTableWidgetItem, QComboBox, QLabel
 
 from compiler.scanner import Scanner
 
 from compiler.parser import Parser
+
+from compiler.regex_search import search as regex_search, SEARCH_TASKS
 
 APP_TITLE = "Текстовый редактор"
 ICONS_DIR = Path(__file__).parent / "resources" / "icons"
@@ -18,6 +20,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.current_file = None
+        self.current_mode = None
 
         self.setWindowTitle(APP_TITLE)
         self.resize(1000, 700)
@@ -39,6 +42,9 @@ class MainWindow(QMainWindow):
         self.result_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.result_table.horizontalHeader().setStretchLastSection(True)
         self.result_table.itemClicked.connect(self._on_table_clicked)
+        self.result_table.setColumnWidth(0, 220)
+        self.result_table.setColumnWidth(1, 200)
+        self.result_table.setColumnWidth(2, 100)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self.editor)
@@ -73,6 +79,7 @@ class MainWindow(QMainWindow):
 
         self.run_lexer_action = QAction("Лексический анализ", self)
         self.run_parser_action = QAction("Синтаксический анализ", self)
+        self.run_regex_action = QAction("Поиск подстрок", self)
 
         self.help_action = QAction("Вызов справки", self)
         self.about_action = QAction("О программе", self)
@@ -97,6 +104,7 @@ class MainWindow(QMainWindow):
 
         self.run_lexer_action.setShortcut(QKeySequence("F5"))
         self.run_parser_action.setShortcut(QKeySequence("F6"))
+        self.run_regex_action.setShortcut(QKeySequence("F7"))
 
         self.help_action.setShortcut(QKeySequence.StandardKey.HelpContents)
 
@@ -115,6 +123,7 @@ class MainWindow(QMainWindow):
             self.about_action: "about.png",
             self.run_lexer_action: "run_lex.png",
             self.run_parser_action: "run_synt.png",
+            self.run_regex_action: "run.png",
         }
 
         for action, filename in icon_map.items():
@@ -159,6 +168,8 @@ class MainWindow(QMainWindow):
         run_menu = menu_bar.addMenu("Пуск")
         run_menu.addAction(self.run_lexer_action)
         run_menu.addAction(self.run_parser_action)
+        run_menu.addSeparator()
+        run_menu.addAction(self.run_regex_action)
 
         help_menu = menu_bar.addMenu("Справка")
         help_menu.addAction(self.help_action)
@@ -187,6 +198,19 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.help_action)
         toolbar.addAction(self.about_action)
 
+        toolbar.addSeparator()
+
+        toolbar.addWidget(QLabel("  Тип поиска: "))
+
+        self.search_combo = QComboBox()
+        for name, _ in SEARCH_TASKS:
+            self.search_combo.addItem(name)
+        self.search_combo.setMinimumWidth(220)
+        toolbar.addWidget(self.search_combo)
+
+        toolbar.addSeparator()
+        toolbar.addAction(self.run_regex_action)
+
         self.addToolBar(toolbar)
 
     def _connect_actions(self):
@@ -214,6 +238,7 @@ class MainWindow(QMainWindow):
 
         self.run_lexer_action.triggered.connect(self._on_run_lexer)
         self.run_parser_action.triggered.connect(self._on_run_parser)
+        self.run_regex_action.triggered.connect(self._on_run_regex)
 
         self.help_action.triggered.connect(self._on_show_help)
         self.about_action.triggered.connect(self._on_show_about)
@@ -290,6 +315,7 @@ class MainWindow(QMainWindow):
             self.setWindowTitle(APP_TITLE)
 
     def _on_run_lexer(self):
+        self.current_mode = "lexer"
         text = self.editor.toPlainText()
         scanner = Scanner()
         tokens, errors = scanner.scan(text)
@@ -344,6 +370,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Лексем: {total_lexemes}, ошибок: {total_errors}")
 
     def _on_run_parser(self):
+        self.current_mode = "parser"
         text = self.editor.toPlainText()
         scanner = Scanner()
         tokens, _ = scanner.scan(text)
@@ -387,6 +414,55 @@ class MainWindow(QMainWindow):
 
         self.statusBar().showMessage(f"Синтаксических ошибок: {total_errors}")
 
+    def _on_run_regex(self):
+        self.current_mode = "regex"
+        text = self.editor.toPlainText()
+
+        self.result_table.setColumnCount(3)
+        self.result_table.setHorizontalHeaderLabels(["Найденная подстрока", "Начальная позиция", "Длина"])
+        self.result_table.setRowCount(0)
+
+        if not text.strip():
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            summary = QTableWidgetItem("Нет данных для поиска")
+            font = summary.font()
+            font.setBold(True)
+            summary.setFont(font)
+            summary.setBackground(QBrush(QColor(230, 230, 230)))
+            self.result_table.setItem(row, 0, summary)
+            self.result_table.setSpan(row, 0, 1, 3)
+            self.statusBar().showMessage("Нет данных для поиска")
+            return
+
+        idx = self.search_combo.currentIndex()
+        pattern = SEARCH_TASKS[idx][1]
+
+        matches = regex_search(text, pattern)
+
+        for m in matches:
+            row = self.result_table.rowCount()
+            self.result_table.insertRow(row)
+            self.result_table.setItem(row, 0, QTableWidgetItem(m.text))
+            self.result_table.setItem(row, 1, QTableWidgetItem(f"Строка {m.line}, позиция {m.start}"))
+            self.result_table.setItem(row, 2, QTableWidgetItem(str(m.length)))
+
+        total = len(matches)
+        row = self.result_table.rowCount()
+        self.result_table.insertRow(row)
+        if total == 0:
+            summary = QTableWidgetItem("Совпадений не найдено")
+        else:
+            summary = QTableWidgetItem(f"Итого найдено совпадений: {total}")
+        font = summary.font()
+        font.setBold(True)
+        summary.setFont(font)
+        summary.setBackground(QBrush(QColor(230, 230, 230)))
+        self.result_table.setItem(row, 0, summary)
+        self.result_table.setSpan(row, 0, 1, 3)
+
+        self.statusBar().showMessage(f"Найдено совпадений: {total}")
+
     def _display_lexeme(self, token):
         if token.type == "WHITESPACE":
             if "\t" in token.lexeme:
@@ -396,21 +472,36 @@ class MainWindow(QMainWindow):
 
     def _on_table_clicked(self, item):
         row = item.row()
-        col_count = self.result_table.columnCount()
 
-        if col_count == 4:
-            location_item = self.result_table.item(row, 3)
-        elif col_count == 3:
+        if self.current_mode == "regex":
             location_item = self.result_table.item(row, 1)
-        else:
+            length_item = self.result_table.item(row, 2)
+            if not location_item or not length_item:
+                return
+            try:
+                length = int(length_item.text())
+            except ValueError:
+                return
+            self._highlight_in_editor(location_item.text(), length)
             return
 
-        if not location_item:
+        if self.current_mode == "parser":
+            location_item = self.result_table.item(row, 1)
+            if not location_item:
+                return
+            self._highlight_in_editor(location_item.text(), 1)
             return
 
-        text = location_item.text()
+        if self.current_mode == "lexer":
+            location_item = self.result_table.item(row, 3)
+            if not location_item:
+                return
+            self._highlight_in_editor(location_item.text(), 1)
+            return
+
+    def _highlight_in_editor(self, location_text, length):
         import re
-        m = re.match(r"Строка (\d+), позиция (\d+)", text)
+        m = re.match(r"Строка (\d+), позиция (\d+)", location_text)
         if not m:
             return
 
@@ -422,7 +513,7 @@ class MainWindow(QMainWindow):
         for _ in range(line_num - 1):
             cursor.movePosition(cursor.MoveOperation.Down)
         cursor.movePosition(cursor.MoveOperation.Right, cursor.MoveMode.MoveAnchor, col_num - 1)
-        cursor.movePosition(cursor.MoveOperation.Right, cursor.MoveMode.MoveAnchor, 1)
+        cursor.movePosition(cursor.MoveOperation.Right, cursor.MoveMode.KeepAnchor, length)
 
         self.editor.setTextCursor(cursor)
         self.editor.setFocus()
@@ -450,7 +541,8 @@ class MainWindow(QMainWindow):
             "Содержит информационные разделы, связанные с языковым процессором.<br><br>"
             "<b>Пуск (F5)</b><br>"
             "Лексический анализ - разбор текста на лексемы.<br>"
-            "Синтаксический анализ (F6) - проверка структуры объявлений.<br><br>"
+            "Синтаксический анализ (F6) - проверка структуры объявлений.<br>"
+            "Поиск подстрок (F7) - поиск ОГРН, комментариев Pascal или RGB-цветов.<br><br>"
             "<b>Справка (F1)</b><br>"
             "Вызов этого руководства и сведений о программе."
         )
@@ -459,8 +551,8 @@ class MainWindow(QMainWindow):
     def _on_show_about(self):
         text = (
             f"<b>{APP_TITLE}</b><br><br>"
-            "Лабораторная работа №3<br>"
-            "«Разработка синтаксического анализатора (парсера)»<br><br>"
+            "Лабораторная работа №4<br>"
+            "Реализация алгоритма поиска подстрок с помощью регулярных выражений»<br><br>"
             "<b>Тема:</b> Объявление структуры на языке Java<br><br>"
             "<b>Автор:</b> Башинов Арья Игоревич, группа АП-326"
         )
