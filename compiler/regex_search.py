@@ -1,6 +1,5 @@
 import re
-
-PATTERN_OGRN = r"\b[15]\d{12}\b"
+PATTERN_OGRN = r"\b[15](0[2-9]|1\d|2[0-6])(0[1-9]|[1-7]\d|8[0-9])\d{8}\b"
 
 PATTERN_PASCAL_COMMENT = r"\{[^}]*\}|\(\*.*?\*\)"
 
@@ -31,12 +30,25 @@ def _line_col_from_pos(text, pos):
     return line, col
 
 
+def _is_valid_ogrn(ogrn):
+    first12 = int(ogrn[:12])
+    control = first12 % 11
+    if control == 10:
+        control = 0
+    return control == int(ogrn[12])
+
+
 def search(text, pattern):
     if not text.strip():
         return []
 
     results = []
     for m in re.finditer(pattern, text, re.MULTILINE):
+        matched_text = m.group(0)
+
+        if pattern == PATTERN_OGRN and not _is_valid_ogrn(matched_text):
+            continue
+
         line, col = _line_col_from_pos(text, m.start())
-        results.append(Match(m.group(0), line, col, len(m.group(0))))
+        results.append(Match(matched_text, line, col, len(matched_text)))
     return results
